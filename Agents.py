@@ -8,6 +8,8 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage  #
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
 from Parser import extract_resume_with_pymupdf
+from Data_preparation import predict_job_title
+
 
 load_dotenv()
 
@@ -44,8 +46,6 @@ class SuggestionForImprovement(TypedDict):
     skill_gaps: List[str]
     recommended_resources: List[str]
     estimated_weeks: int
-
-
 
 class ResumeAnalysisState(TypedDict):
     resume_text: str                                        
@@ -105,7 +105,7 @@ class ResumeAgent:
         self.system_prompt = system_prompt
         self.search_tool = search_tool
 
-    # ✅ Fix 3: takes full state, has self, snake_case name
+   
     def experience_node(self, state: ResumeAnalysisState) -> dict:
         structured_llm = self.llm.with_structured_output(ExperienceListOutput)
 
@@ -116,7 +116,7 @@ class ResumeAgent:
 
         result: ExperienceListOutput = structured_llm.invoke(messages)
 
-        # ✅ Fix 6: return only keys that exist in ResumeAnalysisState
+        
         return {
             "experience": [e.model_dump() for e in result.experiences],
             "messages": [AIMessage(content=f"Extracted {len(result.experiences)} experience entries.")]
@@ -137,11 +137,24 @@ class ResumeAgent:
             "messages": [AIMessage(content=f"Extracted {len(result.projects)} projects.")]
         }
 
-class JobAgent():
-    def __init__():
+class JobAgent:
+    def __init__(self, search_tool,llm, system_prompt:str =""):
+        self.job_title = job_title
+        self.search = search_tool
+        self.llm = llm 
+        self.system_prompt = system_prompt
+
+        
+    def JobTitleSuggestionNode():
+        job_title = predict_job_title()
+
+    def JobSearchNode():
         pass 
-    def JobSuggestionNode():
-        structured_llm = self.llm.with_structured_output(
+    def JobRecommendationNode():
+        pass
+
+
+        
 # ── Build graph ──────────────────────────────────────────────────────────────
 
 def build_graph() -> StateGraph:
