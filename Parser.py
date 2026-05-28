@@ -6,6 +6,7 @@ from langchain_pymupdf4llm import PyMuPDF4LLMLoader
 from dotenv import load_dotenv
 import os
 
+
 load_dotenv()
 
 

@@ -38,8 +38,11 @@ collection = chroma_client.get_or_create_collection(
     name="job_listings", embedding_function=sentence_transformer_ef
 )
 
-
-update_job_database("NxtGenIntern/job_titles_and_descriptions", collection)
+print(collection.count())
+if collection.count() == 0:
+    update_job_database("NxtGenIntern/job_titles_and_descriptions", collection)
+else:
+    print(f"Database already loaded ({collection.count()} records). Skipping sync.")
 
 
 def predict_job_title(jd: str, skills: str, top_n: int = 1):
@@ -50,16 +53,6 @@ def predict_job_title(jd: str, skills: str, top_n: int = 1):
  
     results = collection.query(query_texts=[query_text], n_results=top_n)
 
-    # Parse and display the results cleanly
-    # print(f"\n--- Top {top_n} Matching Job Titles ---")
-    # for i in range(top_n):
-    #     title = results["metadatas"][0][i]["job_title"]
-    #     distance = results["distances"][0][i]
-
-    #     # Convert distance to an approximate percentage similarity score
-    #     similarity = (1 - distance) * 100
-
-    #     print(f"{i+1}. {title} (Match Score: {similarity:.1f}%)")
 
     return results
 
