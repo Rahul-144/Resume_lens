@@ -2,3 +2,9 @@ env
 __pycache__
 .env
 my_chroma_db
+.DS_Store 
+.venv
+.python-version
+uv.lock
+main.py
+pyproject.toml

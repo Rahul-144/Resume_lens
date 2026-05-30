@@ -5,21 +5,36 @@ from typing import  List
 import operator
 from langchain_tavily import TavilySearch
 from uuid import uuid4
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, AnyMessage  # 
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
-from Parser import extract_resume_with_pymupdf,Resume
+import pprint
+from Parser import extract_resume_with_pymupdf
 from Data_preparation import predict_job_title
-from State import ResumeAnalysisState, JobAnalysisState, ExperienceAnalysisDetails, ProjectAnalysisDetails, EducationalDetails, JobDescriptionAnalysis, JobSuggestion, SuggestionForImprovement
-
+from State import  JobAnalysisState,  SuggestionAnalysisState, SuggestionForImprovement,JobDescriptionAnalysis
+from prompts import (
+    JOB_TITLE_SYSTEM_PROMPT,
+    JOB_RECOMMENDATION_SYSTEM_PROMPT,
+    IMPROVEMENT_SYSTEM_PROMPT,
+    JD_EXTRACTION_PROMPT
+)
+from API_call import JSearchClient
 load_dotenv()
-
+job_client = JSearchClient()
 search_tool = TavilySearch(max_results=2)
-llm = ChatOllama(
-    model="llama3.2",
-    temperature = 0
+# llm = ChatOllama(
+#     model="llama3.2",
+#     temperature = 0
+
+# )
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0,
+    api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
 
 )
+
 def reduce_messages(left: list[AnyMessage], right: list[AnyMessage]) -> list[AnyMessage]:
     # assign ids to messages that don't have them
     for message in right:
@@ -38,16 +53,15 @@ def reduce_messages(left: list[AnyMessage], right: list[AnyMessage]) -> list[Any
             merged.append(message)
     return merged
 
-class ExperienceOutput(BaseModel):
-    years_of_experience: int    = Field(description="Total years of professional experience, please don;t hallucinate")
-    skill_set_used: List[str]   = Field(description="Programming languages and ML skills used")
-    tools_used: List[str]       = Field(description="Frameworks, tools, platforms used")
-    summary_of_experience: str  = Field(description="Two sentence summary of experience")
 
-class ProjectOutput(BaseModel):
-    skill_set_used: List[str]   = Field(description="Skills demonstrated in the project")
-    tools_used: List[str]       = Field(description="Tools and frameworks used")
-    summary_of_project: str     = Field(description="One sentence project summary")
+class JDExtraction(BaseModel):
+    experience_needed:    str            = Field(description="Years of experience required e.g. '3-5 years'. 'Not specified' if missing.")
+    skill_set_needed:     List[str]      = Field(description="Skills explicitly required")
+    tools_needed:         List[str]      = Field(description="Frameworks, platforms, and tools explicitly required")
+    preferred_degree:     str            = Field(description="Preferred or required degree e.g. 'B.Tech/M.Tech in CS'. 'Not specified' if missing.")
+    expertise_level:      str            = Field(description="Seniority level: 'Junior', 'Mid', 'Senior', or 'Lead'")
+    other_preferences:    List[str]      = Field(description="Any other preferences mentioned e.g. 'startup experience', 'open source contributions', 'publication record'")
+
 
 class JobOutput(BaseModel):
     job_title: str =Field(description="Job title given")
@@ -55,88 +69,65 @@ class JobOutput(BaseModel):
     skill_required: List[str] =Field(description= "skill required for the job")
     tools_needed: List[str] =Field(description= "tools knowledge needed for the job ")
     experience_needed: int =Field(description="Minimum Experience Required for the job")
-    matching_score: int =Field(description="Matching score of the resume and job")
+    link: str =Field(description="link to the job description")
 
-
-class ExperienceListOutput(BaseModel):
-    experiences: List[ExperienceOutput]
-
-class ProjectListOutput(BaseModel):
-    projects: List[ProjectOutput]
+class JobComparisonOutput(BaseModel):
+    job_title: str =Field(description="Job title given")
+    employer: str =Field(description="company name")
+    matching_score: int =Field(description= "matching score between candidate and job requirements (0-100)")
+    missing_skills: List[str] =Field(description= "skills that the candidate is missing for the job")
+    missing_tools: List[str] =Field(description= "tools knowledge that the candidate is missing for the job ")
 
 class JobListOutput(BaseModel):
     Jobs: List[JobOutput]
-
-
-
-class ResumeAgent:
-    def __init__(self, llm, system_prompt: str = ""):
-        self.llm = llm
-        self.system_prompt = system_prompt
-    def experience_node(self, state: ResumeAnalysisState) -> dict:
-        structured_llm = self.llm.with_structured_output(ExperienceListOutput)
-        experience_text = "\n\n".join(
-            f"Role: {e.role}\nEmployer: {e.employer}\nDate: {e.date}\nDescription: {e.description}"
-            for e in state['resume_text'].experience
-        )
-        messages = [
-            SystemMessage(content=EXPERIENCE_SYSTEM_PROMPT),
-            HumanMessage(content=f"Extract experience details from:\n\n{experience_text}")
-        ]
-        result: ExperienceListOutput = structured_llm.invoke(messages)
-        return {
-            "experience": [e.model_dump() for e in result.experiences],
-            "messages": [AIMessage(content=f"Extracted {len(result.experiences)} experience entries.")]
-        }
-
-    def project_node(self, state: ResumeAnalysisState) -> dict:
-        structured_llm = self.llm.with_structured_output(ProjectListOutput)
-        project_text = "\n\n".join(
-            f"Title: {p.project_title}\nSkills: {', '.join(p.skill_used)}\nDescription: {p.description}"
-            for p in state['resume_text'].project
-        )
-        messages = [
-            SystemMessage(content=PROJECT_SYSTEM_PROMPT),
-            HumanMessage(content=f"Extract project details from:\n\n{project_text}")
-        ]
-       
-        result: ProjectListOutput = structured_llm.invoke(messages)
-
-        return {
-            "projects": [p.model_dump() for p in result.projects],
-            "messages": [AIMessage(content=f"Extracted {len(result.projects)} projects.")]
-        }
+class JobListComparisonOutput(BaseModel):
+    Jobs: List[JobComparisonOutput]
+class ImprovementOutput(BaseModel):
+    imporvement_plan: List[SuggestionForImprovement]
 
 class JobAgent:
-    def __init__(self, search_tool, llm, system_prompt: str = ""):
+    def __init__(self, search_tool, llm, job_client, system_prompt: str = ""):
         self.search = search_tool
         self.llm = llm
+        self.client = job_client
         self.system_prompt = system_prompt
+    def _candidate_skills(self, state) -> str:
+        resume= state['resume']
+
+        experience_skills = " ".join(
+            skill
+            for e in resume.experience
+            for skill in e.skill_used
+        )
+        project_skills = " ".join(
+            skill         
+            for p in resume.projects
+            for skill in p.skill_used
+        )
+
+        return experience_skills + " " + project_skills
+    def _candidate_experience(self, state) -> str:
+        resume = state['resume']
+        return " ".join(
+            e.description
+            for e in resume.experience
+        )
+    def _candidate_projects(self, state) -> str:
+        resume = state['resume']
+        return " ".join(
+            p.description
+            for p in resume.projects
+        )
 
     def JobTitleSuggestionNode(self, state: JobAnalysisState) -> dict:
         
-        # Build JD text from experience summaries
-        experience_text = " ".join(
-            e['summary_of_experience']
-            for e in state['experience']
-        )
-        project_text = " ".join(
-            p['summary_of_project']
-            for p in state['projects']
-        )
-        # Build skills from experience
-        skills = " ".join(
-            skill
-            for e in state['experience']
-            for skill in e['skill_set_used'] + e['tools_used']
-        ).join(
-            skill            for p in state['projects']
-            for skill in p['skill_set_used'] + p['tools_used']
-        )
+       
+        experience_text = self._candidate_experience(state)
 
-        # Build skills from projects
-        
-        # Query ChromaDB separately for experience and projects
+        project_text = self._candidate_projects(state)
+     
+        skills = self._candidate_skills(state)
+
         job_titles_exp  = predict_job_title(jd=experience_text, skills=skills, top_n=3)
         job_titles_proj = predict_job_title(jd=project_text, skills=skills, top_n=3)
 
@@ -158,135 +149,144 @@ class JobAgent:
         }
 
     def JobSearchNode(self, state: JobAnalysisState) -> dict:
-    
-        yoe = sum(e['years_of_experience'] for e in state['experience'])
         titles = state['suggested_title']
+        extract_llm = self.llm.with_structured_output(JDExtraction)
+        job_descriptions_all = []
 
-        job_descriptions = []
+        for title in titles[:2]:                        
+            job_details = self.client.search(title=title, num_pages=1)
 
-        # Search across multiple job platforms
-        for title in titles:
-            queries = [
-                f"{title} job opening site:linkedin.com/jobs",
-                f"{title} job opening site:indeed.com",
-                f"{title} job opening site:glassdoor.com",
-            ]
+            for job in job_details[:2]:               
+                jd_text = job.get('job_description', '')
+                if not jd_text:                         
+                    continue
 
-            for query in queries:
-                results = self.search.invoke(query)
-            for r in results:
-                job_descriptions.append(
-                    JobDescriptionAnalysis(
-                        employer=r['employer'],
-                        job_title=r['title'],
-                        experience_needed=str(yoe),
-                        skill_set_needed=[],
-                        tools_needed=[],
-                    )
-                )
+                try:
+                    extracted: JDExtraction = extract_llm.invoke([
+                        SystemMessage(content=JD_EXTRACTION_PROMPT),  
+                        HumanMessage(content=f"Extract structured information from this job description:\n\n{jd_text[:3000]}")
+                    ])
+                except Exception as e:
+                    print(f"JD extraction failed for {job.get('job_title')}: {e}")
+                    continue                            # ✅ skip bad JD, don't crash
+
+                # ✅ Merge API fields + LLM fields into final TypedDict schema
+                job_descriptions_all.append(JobDescriptionAnalysis(
+                    job_title=          job.get('job_title', ''),
+                    employer=           job.get('employer_name', ''),
+                    employment_type=    job.get('job_employment_type', ''),
+                    apply_link=         job.get('job_apply_link', ''),
+                    experience_needed=  extracted.experience_needed,
+                    skill_set_needed=   extracted.skill_set_needed,
+                    tools_needed=       extracted.tools_needed,
+                    preferred_degree=   extracted.preferred_degree,
+                    expertise_level=    extracted.expertise_level,
+                    other_preferences=  extracted.other_preferences,
+                ))
 
         return {
-            "job_descriptions": job_descriptions,
-            "messages": [AIMessage(content=f"Found {len(job_descriptions)} job postings for {title} across LinkedIn, Indeed and Glassdoor.")]
+            "job_descriptions": job_descriptions_all,
+            "messages": [AIMessage(content=f"Found {len(job_descriptions_all)} job postings for {', '.join(titles[:2])}.")]
         }
-
     def JobRecommendationNode(self, state: JobAnalysisState) -> dict:
-        structured_llm = self.llm.with_structured_output(JobListOutput)
+        structured_llm = self.llm.with_structured_output(JobListComparisonOutput)
 
-        candidate_skills = " ".join(
-            skill
-            for e in state['experience']
-            for skill in e['skill_set_used'] + e['tools_used']
-        )
+        candidate_skills = self._candidate_skills(state)
+        jd = state['job_descriptions']
 
-        jd_text = "\n\n".join(
-            f"Experience needed: {jd['experience_needed']}\n"
-            f"Skills needed: {', '.join(jd['skill_set_needed'])}\n"
-            f"Tools needed: {', '.join(jd['tools_needed'])}"
-            for jd in state['job_descriptions']
-        )
-
+        job_desc_texts = []
+        for jd in state['job_descriptions']:
+            job_desc_texts.append(
+                f"Title: {jd['job_title']}\n"
+                f"Employer: {jd['employer']}\n"
+                f"Experience Needed: {jd['experience_needed']} years\n"
+                f"Skills Needed: {', '.join(jd['skill_set_needed'])}\n"
+                f"Tools Needed: {', '.join(jd['tools_needed'])}\n"
+            )
+        all_jds_text = "\n\n".join(job_desc_texts)
+    
         messages = [
-            SystemMessage(content="You are a job recommendation expert. Compare the candidate's skills with the job descriptions and recommend the best matching jobs with a matching score."),
-            HumanMessage(content=(
-                f"Candidate skills: {candidate_skills}\n\n"
-                f"Job descriptions:\n{jd_text}\n\n"
-                f"Recommended job title: {state['suggested_title']}\n\n"
-                "Rank the jobs and provide matching scores."
-            ))
-        ]
+        SystemMessage(content=JOB_RECOMMENDATION_SYSTEM_PROMPT),
+        HumanMessage(content=(
+            f"Candidate skills: {candidate_skills}\n\n"
+            f"Recommended target job title: {state['suggested_title']}\n\n"
+            f"Here are ALL the available Job Descriptions:\n"
+            f"{all_jds_text}\n\n"
+            
+        ))
+    ]
 
-        result: JobListOutput = structured_llm.invoke(messages)
+        result: JobListComparisonOutput = structured_llm.invoke(messages)
 
         return {
-            "job_suggestion": {
-                "matching_score": result.Jobs[0].matching_score if result.Jobs else 0,
-                "missing_skills": [],
-                "missing_tools":  [],
-            },
+            "job_suggestion": result,
             "messages": [AIMessage(content=f"Recommended {len(result.Jobs)} jobs.")]
         }
-    def ReferalNode(self,state: JobAnalysisState) -> dict:
-        institutes =  " ".join(
-            e['college_university']
-            for e in state['education'])
-        companies = " ".join(
-            e["employers"]
-            for e in state['experience']
-        )
-        targeted_companies = " ".join(
-            jd['employer']            for jd in state['job_descriptions']
-        )
-        for target in targeted_companies.split():
-            query = f"Find employer linkedin or email who working at {target} with education from {institutes} or had worked at {companies} or both on LinkedIn for a job at {target}."
-            results = self.search.invoke(query)
+    # def ReferalNode(self,state: JobAnalysisState) -> dict:
+    #     institutes =  " ".join(
+    #         e['college_university']
+    #         for e in state['education'])
+    #     companies = " ".join(
+    #         e["employers"]
+    #         for e in state['experience']
+    #     )
+    #     targeted_companies = " ".join(
+    #         jd['employer']            for jd in state['job_descriptions']
+    #     )
+    #     for target in targeted_companies.split():
+    #         query = f"Find employer linkedin or email who working at {target} with education from {institutes} or had worked at {companies} or both on LinkedIn for a job at {target}."
+    #         results = self.search.invoke(query)
 
-            # Process results to find referral connections (not implemented here)
-        return {
-            "referral_connections": []
-        }
+
+    #     return {
+    #         "referral_connections": []
+    #     }
         
 
-class RecommendationAgent:
-    def __init__(self,llm,search_tool,system_prompt = ""):
-        self.llm = llm 
-        self.search = search_tool
-        self.system_prompt = system_prompt
-    def BlogNode(self):
-        pass
-    def ResourceNode(self):
-        pass
-    def CourseNode(self):
-        pass
-    def TimelineNode(self):
-        pass
-    def GoalSettingNode(self):
-        pass
-    def FeedbackNode(self):
-        pass
-    def ImprovementSuggestionNode(self):
-        pass
-    def youTubeNode(self):
-        pass
-    
+# class RecommendationAgent:
+#     def __init__(self,llm,search_tool,system_prompt = ""):
+#         self.llm = llm 
+#         self.search = search_tool
+#         self.system_prompt = system_prompt
+#     def BlogNode(self,state: SuggestionAnalysisState)-> dict:
+#         pass    
+        
+#     def ResourceNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+#     def CourseNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+#     def TimelineNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+#     def GoalSettingNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+#     def FeedbackNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+#     def ImprovementSuggestionNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+#     def youTubeNode(self,state: SuggestionAnalysisState) -> dict:
+#         pass
+
         
         
 # ── Build graph ──────────────────────────────────────────────────────────────
 
 def build_graph() -> StateGraph:
-    agent = ResumeAgent(llm=llm)
-    # agent_2 = JobAgent()
+   
+    agent = JobAgent(search_tool=search_tool, llm=llm, job_client=job_client)
+    
 
+    graph = StateGraph(JobAnalysisState)
 
-    graph = StateGraph(ResumeAnalysisState)
+    graph.add_node("job_title_suggestion", agent.JobTitleSuggestionNode)
+    graph.add_node("job_search", agent.JobSearchNode)
+    graph.add_node("job_recommendation",    agent.JobRecommendationNode)
 
-    graph.add_node("experience_node", agent.experience_node)
-    graph.add_node("project_node",    agent.project_node)
+    # graph.add_node("referral", agent.ReferalNode)
 
-    graph.set_entry_point("experience_node")
-    graph.add_edge("experience_node", "project_node")
-    graph.add_edge("project_node", END)
-
+    graph.set_entry_point("job_title_suggestion")
+    graph.add_edge("job_title_suggestion", "job_search")
+    graph.add_edge("job_search", "job_recommendation")
+    # graph.add_edge("job_recommendation", "referral")
     return graph.compile()
 
 
@@ -297,14 +297,15 @@ if __name__ == "__main__":
         extracted_data = extract_resume_with_pymupdf(pdf_file_path)
     except Exception as e:
         print(f"Extraction halted: {e}")
-    initial_state: ResumeAnalysisState = {
-        "resume_text":     extracted_data,
-        "experience":      [],
-        "projects":        [],
-        "improvement_plan": None,
-        "messages":        [],
-    }
+    initial_state = JobAnalysisState(
+        resume= extracted_data,
+        education=extracted_data.education,
+        projects=extracted_data.projects,
+        experience=extracted_data.experience,
+        job_descriptions=[],
+        job_suggestion=None,
+    )
 
     resume_result = pipeline.invoke(initial_state)
-    print("Experience:", resume_result["experience"])
-    print("Projects:",   resume_result["projects"])
+    print("Final Result:")
+    pprint.pprint(resume_result)
