@@ -9,9 +9,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, AnyMessage  # 
 from langchain_ollama import ChatOllama
 from pydantic import BaseModel, Field
+from Retrival_models import Retrieval
 import pprint
 from Parser import extract_resume_with_pymupdf
-from Data_preparation import predict_job_title
 from State import  JobAnalysisState,  SuggestionAnalysisState, SuggestionForImprovement,JobDescriptionAnalysis
 from prompts import (
     JOB_TITLE_SYSTEM_PROMPT,
@@ -19,10 +19,12 @@ from prompts import (
     IMPROVEMENT_SYSTEM_PROMPT,
     JD_EXTRACTION_PROMPT
 )
+
 from API_call import JSearchClient
 load_dotenv()
 job_client = JSearchClient()
 search_tool = TavilySearch(max_results=2)
+
 # llm = ChatOllama(
 #     model="llama3.2",
 #     temperature = 0
@@ -127,13 +129,17 @@ class JobAgent:
         project_text = self._candidate_projects(state)
      
         skills = self._candidate_skills(state)
-
-        job_titles_exp  = predict_job_title(jd=experience_text, skills=skills, top_n=3)
-        job_titles_proj = predict_job_title(jd=project_text, skills=skills, top_n=3)
+        Retrieve = Retrieval()
+        
+        job_titles_exp  = Retrieve.RRF(experience_text, skills, top_n=3)
+        
+        job_titles_proj = Retrieve.RRF(project_text, skills, top_n=3)
 
         # Extract title strings from ChromaDB results
-        titles_exp  = [meta["job_title"] for meta in job_titles_exp["metadatas"][0]]
-        titles_proj = [meta["job_title"] for meta in job_titles_proj["metadatas"][0]]
+        titles_exp  = [hit["metadata"]["job_title"] for hit in job_titles_exp]
+        titles_proj = [hit["metadata"]["job_title"] for hit in job_titles_proj]
+        print(f"Experience-based titles: {titles_exp}")
+        print(f"Project-based titles: {titles_proj}")
 
         # Deduplicate while preserving order
         seen = set()
@@ -222,25 +228,26 @@ class JobAgent:
             "job_suggestion": result,
             "messages": [AIMessage(content=f"Recommended {len(result.Jobs)} jobs.")]
         }
-    # def ReferalNode(self,state: JobAnalysisState) -> dict:
-    #     institutes =  " ".join(
-    #         e['college_university']
-    #         for e in state['education'])
-    #     companies = " ".join(
-    #         e["employers"]
-    #         for e in state['experience']
-    #     )
-    #     targeted_companies = " ".join(
-    #         jd['employer']            for jd in state['job_descriptions']
-    #     )
-    #     for target in targeted_companies.split():
-    #         query = f"Find employer linkedin or email who working at {target} with education from {institutes} or had worked at {companies} or both on LinkedIn for a job at {target}."
-    #         results = self.search.invoke(query)
+    def ReferalNode(self,state: JobAnalysisState) -> dict:
+        institutes =  " ".join(
+            e['college_university']
+            for e in state['education'])
+        companies = " ".join(
+            e["employers"]
+            for e in state['experience']
+        )
+        targeted_companies = " ".join(
+            jd['employer'] 
+            for jd in state['job_descriptions']
+        )
+        for target in targeted_companies.split():
+            query = f"Find employer linkedin or email who working at {target} with education from {institutes} or had worked at {companies} or both on LinkedIn for a job at {target}."
+            results = self.search.invoke(query)
 
 
-    #     return {
-    #         "referral_connections": []
-    #     }
+        return {
+            "referral_connections": []
+        }
         
 
 # class RecommendationAgent:
