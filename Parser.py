@@ -89,17 +89,17 @@ class Resume(BaseModel):
     certifications: List[str] = Field(default=[], description="Certifications or credentials.")
     publication: Optional[List[Publication]] = Field(default=[], description="Research publications if any.")
 
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0,
-    api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
-
-)
-# llm = ChatOllama(
-#     model="llama3.2",
-#     temperature = 0
+# llm = ChatGoogleGenerativeAI(
+#     model="gemini-2.5-flash",
+#     temperature=0,
+#     api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
 
 # )
+llm = ChatOllama(
+    model="llama3.2",
+    temperature = 0
+
+)
 structured_llm = llm.with_structured_output(Resume)
 
 prompt = ChatPromptTemplate.from_messages([

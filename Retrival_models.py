@@ -58,6 +58,8 @@ class Retrieval:
         return hits
     
     def RRF(self, jd: str, skills: str, top_n: int = 2, K: int = 60):
+        if jd.strip() == "" and skills.strip() == "":
+            return []
         BM25_results = self.search_with_metadata(jd=jd, skills=skills, top_n=top_n)
         Chroma_results = self.predict_job_title(jd=jd, skills=skills, top_n=top_n)
 

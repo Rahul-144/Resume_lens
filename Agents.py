@@ -25,17 +25,17 @@ load_dotenv()
 job_client = JSearchClient()
 search_tool = TavilySearch(max_results=2)
 
-# llm = ChatOllama(
-#     model="llama3.2",
-#     temperature = 0
+llm = ChatOllama(
+    model="llama3.2",
+    temperature = 0
+
+    )
+# llm = ChatGoogleGenerativeAI(
+#     model="gemini-2.5-flash",
+#     temperature=0,
+#     api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
 
 # )
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0,
-    api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
-
-)
 
 def reduce_messages(left: list[AnyMessage], right: list[AnyMessage]) -> list[AnyMessage]:
     # assign ids to messages that don't have them
@@ -243,7 +243,7 @@ class JobAgent:
         for target in targeted_companies.split():
             query = f"Find employer linkedin or email who working at {target} with education from {institutes} or had worked at {companies} or both on LinkedIn for a job at {target}."
             results = self.search.invoke(query)
-
+        print(f"Referral search results: {results}")
 
         return {
             "referral_connections": []
