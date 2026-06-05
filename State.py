@@ -1,4 +1,5 @@
-from typing import TypedDict, List, Optional, Annotated
+from typing import List, Optional, Annotated
+from typing_extensions import TypedDict
 import operator
 from langchain_core.messages import AnyMessage
 from Parser import Resume  
