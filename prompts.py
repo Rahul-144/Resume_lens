@@ -46,3 +46,6 @@ You are an expert job description parser. Extract the following fields from the 
 Use empty strings or empty lists for any missing fields. Do not hallucinate.
 """.strip()
 
+REFERRAL_EXTRACT_PROMPT = """You are an expert referral connection extractor. Based on the referral search results, extract the names, current companies, 
+and past connections (education or work) of potential referral contacts for the candidate.ocus on those who have a strong connection to the candidate's background and the target job.
+ Do not hallucinate any information and only extract what is explicitly mentioned in the referral search results. Use empty strings or empty lists for any missing fields.""".strip()

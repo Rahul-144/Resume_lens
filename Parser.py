@@ -6,6 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_pymupdf4llm import PyMuPDF4LLMLoader
 from dotenv import load_dotenv
 import os
+from cache import load_from_cache, save_to_cache
 from prompts import (
     RESUME_SYSTEM_PROMPT
 )
@@ -89,17 +90,16 @@ class Resume(BaseModel):
     certifications: List[str] = Field(default=[], description="Certifications or credentials.")
     publication: Optional[List[Publication]] = Field(default=[], description="Research publications if any.")
 
-# llm = ChatGoogleGenerativeAI(
-#     model="gemini-2.5-flash",
-#     temperature=0,
-#     api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
-
-# )
-llm = ChatOllama(
-    model="llama3.2",
-    temperature = 0
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0,
+    api_key=os.environ.get("GOOGLE_API_KEY") # Ensure this env variable is set
 
 )
+# llm = ChatOllama(
+#     model="llama3.2",
+#     temperature = 0
+# )
 structured_llm = llm.with_structured_output(Resume)
 
 prompt = ChatPromptTemplate.from_messages([
@@ -116,6 +116,12 @@ MAX_CHARS = 12000  # Stay within llama3.2's context window
 
 
 def extract_resume_with_pymupdf(pdf_path: str) -> Resume:
+    # Try to load from cache first
+    cached_data = load_from_cache(pdf_path)
+    if cached_data is not None:
+        return cached_data
+    
+
     loader = PyMuPDF4LLMLoader(pdf_path)
     pages = loader.load()
     markdown_text = "\n".join(page.page_content for page in pages)
@@ -125,6 +131,8 @@ def extract_resume_with_pymupdf(pdf_path: str) -> Resume:
         markdown_text = markdown_text[:MAX_CHARS]
 
     result = extraction_chain.invoke({"resume_text": markdown_text})
+    save_to_cache(pdf_path, result)
+
 
     if result is None:
         raise ValueError("Structured extraction returned None — the LLM may have failed to parse the schema.")

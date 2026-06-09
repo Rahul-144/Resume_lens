@@ -8,3 +8,4 @@ my_chroma_db
 uv.lock
 main.py
 pyproject.toml
+.cache

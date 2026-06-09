@@ -1,5 +1,4 @@
-from typing import List, Optional, Annotated
-from typing_extensions import TypedDict
+from typing import List, Optional, Annotated, TypedDict
 import operator
 from langchain_core.messages import AnyMessage
 from Parser import Resume  
@@ -41,8 +40,10 @@ class JobAnalysisState(TypedDict):
     suggested_title:      List[str]         
     job_descriptions:     List[JobDescriptionAnalysis]
     job_suggestion:       Optional[JobSuggestion]
+    education:            List[dict]  # Extracted from resume for referral searches
+    experience:           List[dict]  # Extracted from resume for referral searches
+    projects:             List[dict]  # Extracted from resume for referral searches
     referral_connections: List[dict]
-    messages:             Annotated[List[AnyMessage], operator.add]
 
 
 class SuggestionAnalysisState(TypedDict):
